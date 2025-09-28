@@ -1,122 +1,193 @@
-import { Telegraf } from "telegraf";
-import { Users } from "./db.js";
-import { isPremium, canCreatePanel } from "./utils.js";
-import { createPteroUser, createPteroServer } from "./ptero.js";
-import { config } from "./config.js";
+// telegram.js
+import config from './system/config.js';
+import { Users } from './system/db.js';
+import { createPteroUser, createPteroServer } from './system/ptero.js';
+import { isPremium, resolveTarget } from './system/utils.js';
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
+export default function telegramHandler(bot) {
 
-// Commande /start
-bot.start(ctx => {
-  ctx.replyWithPhoto(
-    { url: config.MENU_IMG },
-    { caption: `
+  // ================== /start ==================
+  bot.start(async ctx => {
+    const msg = `
 👋 Bienvenue sur le Cpanel Bot!
-🎯 Commandes:
-/my_id
-/addpanel
-/c-panel
-/add_prem
-/d-panel
-/add_server
 
-📞 Contact Admin: ${config.CONTACT_ADMIN.telegram}
-📢 Pubs: ${config.ADSTERA_LINK}` }
-  );
-});
+🎯 Commandes disponibles (Premium/Admin) :
+/my_id - Voir ton ID Telegram
+/addpanel - Créer un panel Pterodactyl
+/c-panel - Créer un compte + panel
+/add_prem - Ajouter un utilisateur Premium (admin)
+/d-panel - Supprimer les panels d'un utilisateur (admin)
+/add_server - Ajouter un serveur (admin)
+/buy_premium - Contact pour devenir Premium
 
-// /add_prem
-bot.command("add_prem", async ctx => {
-  const args = ctx.message.text.split(" ").slice(1);
-  const targetId = args[0];
-  if(ctx.from.id != config.ADMIN_NUMBER) return ctx.reply("❌ Commande réservée à l'admin");
-  if(!targetId) return ctx.reply("⚠️ ID Telegram manquant");
+${config.SITES_REF}
+💻 Admin: ID ${config.ADMIN_ID}
+📢 Publicité Adsterra: ${config.ADSTERA_LINK}
 
-  const expireDate = new Date();
-  expireDate.setMonth(expireDate.getMonth()+1);
+📞 Contact Admin :
+- Telegram: ${config.CONTACT_ADMIN.telegram}
+- WhatsApp: ${config.CONTACT_ADMIN.whatsapp}
+`;
+    try { await ctx.replyWithPhoto({ url: config.MENU_IMG }, { caption: msg }); }
+    catch { ctx.reply(msg); }
+  });
 
-  await Users.updateOne(
-    { telegram_id: targetId },
-    { telegram_id: targetId, premium: true, expire_at: expireDate },
-    { upsert: true }
-  );
+  // ================== /my_id ==================
+  bot.command('my_id', ctx => ctx.reply(`📌 Ton Telegram ID: ${ctx.from.id}`));
 
-  ctx.reply(`✅ L'utilisateur ${targetId} est premium jusqu'au ${expireDate.toLocaleDateString()}`);
-});
+  // ================== /addpanel ==================
+  bot.command('addpanel', async ctx => {
+    const args = ctx.message.text.split(' ').slice(1);
+    const usernamePtero = args[0];
+    if (!usernamePtero) return ctx.reply("⚠️ Usage: /addpanel <username_pterodactyl> [targetId|@username]");
 
-// /c-panel
-bot.command("c-panel", async ctx => {
-  const args = ctx.message.text.split(" ").slice(1).join(" ").split("|");
-  if(args.length < 4) return ctx.reply("❌ Format: /c-panel user|password|panel_name|id_telegram");
+    const maybeTarget = args[1];
+    const resolved = await resolveTarget(maybeTarget, ctx, bot);
+    if (!resolved.ok) return ctx.reply(`❌ ${resolved.error}`);
+    const targetId = resolved.id;
 
-  const [username, password, panelName, telegramId] = args;
-  if(ctx.from.id != config.ADMIN_NUMBER && !(await isPremium(ctx.from.id))) return ctx.reply("⚠️ Commande réservée à l'admin ou premium");
+    let user = await Users.findOne({ telegram_id: targetId });
+    if (!user) return ctx.reply("❌ Utilisateur non trouvé.");
 
-  const userId = await createPteroUser(username, password, `${username}@mail.com`);
-  const serverId = await createPteroServer(userId, panelName);
+    const callerId = ctx.from.id;
+    if (callerId !== config.ADMIN_ID && !isPremium(user)) return ctx.reply("❌ Action réservée aux Premium/Admin.");
+    if (user.panels_used >= user.panels_limit && callerId !== config.ADMIN_ID) return ctx.reply("❌ Limite de panels atteinte.");
 
-  await Users.updateOne(
-    { telegram_id: telegramId },
-    { $inc: { panels_used: 1 } },
-    { upsert: true }
-  );
+    try {
+      const email = `${usernamePtero}@example.com`;
+      const pteroUserId = await createPteroUser(usernamePtero, "password123", email);
+      const serverId = await createPteroServer(pteroUserId, usernamePtero);
 
-  ctx.reply(`✅ Panel créé pour ${telegramId}\nUser ID: ${userId}\nServer ID: ${serverId}`);
-});
+      user.panels_used += 1; await user.save();
 
-// /addpanel
-bot.command("addpanel", async ctx => {
-  const args = ctx.message.text.split(" ").slice(1);
-  const telegramId = args[0] || ctx.from.id;
+      const replyText = `✅ Panel créé !
+Panel: ${usernamePtero}
+Panel ID: ${serverId}
+RAM: ${config.PANEL_DEFAULT_RAM === 0 ? "UNLI" : config.PANEL_DEFAULT_RAM}MB
+CPU: ${config.PANEL_DEFAULT_CPU}%`;
 
-  const user = await Users.findOne({ telegram_id: telegramId });
-  if(!user) return ctx.reply("❌ L'utilisateur n'existe pas ou n'est pas premium");
-  if(!(await canCreatePanel(telegramId))) return ctx.reply("⚠️ Limite de panels atteinte (5 max)");
+      try { await bot.telegram.sendPhoto(targetId, { url: config.MENU_IMG }, { caption: replyText }); }
+      catch { return ctx.reply(`✅ Panel créé mais impossible d'envoyer à l'utilisateur (${targetId}).`); }
 
-  const panelName = `panel_${user.panels_used + 1}`;
-  const serverId = await createPteroServer(user.telegram_id, panelName);
+      if (callerId !== targetId) await ctx.reply(`✅ Panel créé et envoyé à l'utilisateur (${targetId}).`);
+      else await ctx.reply(`✅ Panel créé pour toi (${usernamePtero}).`);
+    } catch (err) {
+      ctx.reply(`❌ Erreur: ${err.response?.data || err.message}`);
+    }
+  });
 
-  await Users.updateOne(
-    { telegram_id: telegramId },
-    { $inc: { panels_used: 1 } }
-  );
+  // ================== /c-panel ==================
+  bot.command('c-panel', async ctx => {
+    const args = ctx.message.text.split(' ').slice(1).join(' ').split('|');
+    if (args.length < 3) return ctx.reply("⚠️ Usage: /c-panel user|password|panel_name [targetId|@username]");
 
-  ctx.reply(`✅ Nouveau panel créé pour ${telegramId}\nServer ID: ${serverId}`);
-});
+    const [username, password, panelName] = args;
+    const maybeTarget = args[3] || null;
+    const resolved = await resolveTarget(maybeTarget, ctx, bot);
+    if (!resolved.ok) return ctx.reply(`❌ ${resolved.error}`);
+    const targetId = resolved.id;
 
-// /d-panel
-bot.command("d-panel", async ctx => {
-  if(ctx.from.id != config.ADMIN_NUMBER) return ctx.reply("❌ Commande réservée à l'admin");
+    let user = await Users.findOne({ telegram_id: targetId });
+    if (!user) return ctx.reply("❌ Utilisateur non trouvé.");
 
-  const args = ctx.message.text.split(" ").slice(1);
-  const telegramId = args[0];
-  if(!telegramId) return ctx.reply("⚠️ ID manquant");
+    const callerId = ctx.from.id;
+    if (callerId !== config.ADMIN_ID && !isPremium(user)) return ctx.reply("❌ Action réservée aux Premium/Admin.");
 
-  // Ici suppression via Ptero API (à implémenter)
-  await Users.updateOne(
-    { telegram_id: telegramId },
-    { $inc: { panels_used: -1 } }
-  );
+    try {
+      const pteroUserId = await createPteroUser(username, password, `${username}@example.com`);
+      const serverId = await createPteroServer(pteroUserId, panelName);
 
-  ctx.reply(`✅ Panel supprimé pour ${telegramId}`);
-});
+      if (callerId !== config.ADMIN_ID) {
+        user.panels_used += 1;
+        await user.save();
+      }
 
-// /add_server
-bot.command("add_server", async ctx => {
-  if(ctx.from.id != config.ADMIN_NUMBER) return ctx.reply("❌ Commande réservée à l'admin");
-  const args = ctx.message.text.split(" ").slice(1);
-  const telegramId = args[0];
-  if(!telegramId) return ctx.reply("⚠️ ID manquant");
+      const replyText = `✅ Compte + Panel créé !
+Utilisateur: ${username}
+Panel: ${panelName}
+Server ID: ${serverId}`;
 
-  const user = await Users.findOne({ telegram_id: telegramId });
-  if(!user) return ctx.reply("❌ L'utilisateur n'existe pas");
+      try { await bot.telegram.sendPhoto(targetId, { url: config.MENU_IMG }, { caption: replyText }); }
+      catch { return ctx.reply(`✅ Panel créé mais impossible d'envoyer à l'utilisateur (${targetId}).`); }
 
-  const panelName = `panel_${user.panels_used + 1}`;
-  const serverId = await createPteroServer(user.telegram_id, panelName);
+      if (callerId !== targetId) await ctx.reply(`✅ Panel créé et envoyé à l'utilisateur (${targetId}).`);
+      else await ctx.reply(`✅ Panel créé pour toi (${panelName}).`);
 
-  await Users.updateOne({ telegram_id: telegramId }, { $inc: { panels_used: 1 } });
+    } catch (err) {
+      ctx.reply(`❌ Erreur: ${err.response?.data || err.message}`);
+    }
+  });
 
-  ctx.reply(`✅ Serveur ajouté pour ${telegramId}\nServer ID: ${serverId}`);
-});
+  // ================== /add_prem ==================
+  bot.command('add_prem', async ctx => {
+    if (ctx.from.id !== config.ADMIN_ID) return ctx.reply("❌ Seulement admin.");
 
-bot.launch();
+    const args = ctx.message.text.split(' ').slice(1);
+    if (!args[0]) return ctx.reply("⚠️ Usage: /add_prem <telegram_id>");
+
+    const resolved = await resolveTarget(args[0], ctx, bot);
+    if (!resolved.ok) return ctx.reply(`❌ ${resolved.error}`);
+    const targetId = resolved.id;
+
+    let user = await Users.findOne({ telegram_id: targetId });
+    if (!user) {
+      user = new Users({ telegram_id: targetId, premium: true, panels_limit: 5, expire_at: new Date(new Date().getTime() + 30*24*60*60*1000) });
+      await user.save();
+    } else {
+      user.premium = true;
+      user.expire_at = new Date(new Date().getTime() + 30*24*60*60*1000);
+      await user.save();
+    }
+
+    ctx.reply(`✅ Utilisateur (${targetId}) ajouté en Premium pour 1 mois.`);
+  });
+
+  // ================== /d-panel ==================
+  bot.command('d-panel', async ctx => {
+    if (ctx.from.id !== config.ADMIN_ID) return ctx.reply("❌ Seulement admin.");
+
+    const args = ctx.message.text.split(' ').slice(1);
+    if (!args[0]) return ctx.reply("⚠️ Usage: /d-panel <telegram_id>");
+
+    const resolved = await resolveTarget(args[0], ctx, bot);
+    if (!resolved.ok) return ctx.reply(`❌ ${resolved.error}`);
+    const targetId = resolved.id;
+
+    let user = await Users.findOne({ telegram_id: targetId });
+    if (!user) return ctx.reply("❌ Utilisateur non trouvé.");
+
+    user.panels_used = 0;
+    await user.save();
+
+    ctx.reply(`✅ Tous les panels de l'utilisateur (${targetId}) ont été réinitialisés.`);
+  });
+
+  // ================== /add_server ==================
+  bot.command('add_server', async ctx => {
+    if (ctx.from.id !== config.ADMIN_ID) return ctx.reply("❌ Seulement admin.");
+
+    const args = ctx.message.text.split(' ').slice(1);
+    if (!args[0] || !args[1]) return ctx.reply("⚠️ Usage: /add_server <username_pterodactyl> <panel_name>");
+
+    const [usernamePtero, panelName] = args;
+
+    try {
+      const pteroUserId = await createPteroUser(usernamePtero, "password123", `${usernamePtero}@example.com`);
+      const serverId = await createPteroServer(pteroUserId, panelName);
+      ctx.reply(`✅ Serveur ajouté pour ${usernamePtero} avec ID ${serverId}`);
+    } catch(err) {
+      ctx.reply(`❌ Erreur: ${err.response?.data || err.message}`);
+    }
+  });
+
+  // ================== /buy_premium ==================
+  bot.command('buy_premium', ctx => {
+    ctx.reply(`⚠️ Cette commande est réservée aux administrateurs ou aux utilisateurs Premium.
+Pour devenir Premium, contacte directement l'admin :
+
+📞 Telegram: ${config.CONTACT_ADMIN.telegram}
+📞 WhatsApp: ${config.CONTACT_ADMIN.whatsapp}`);
+  });
+
+  console.log("✅ Telegram handler chargé !");
+}
