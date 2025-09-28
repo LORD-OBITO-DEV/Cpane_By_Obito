@@ -1,25 +1,16 @@
-export function isPremium(user){
-  if(!user) return false;
-  if(!user.premium) return false;
-  if(user.expire_at && new Date() > new Date(user.expire_at)) return false;
-  return true;
+import { Users } from "./db.js";
+
+// Vérifie si l'utilisateur est premium et actif
+export async function isPremium(telegramId) {
+  const user = await Users.findOne({ telegram_id: telegramId });
+  if (!user) return false;
+  if (user.premium && user.expire_at && user.expire_at < new Date()) return false;
+  return user.premium;
 }
 
-export async function resolveTarget(arg, ctx, bot){
-  try{
-    if(!arg || arg === "") return { ok: true, id: ctx.from.id };
-    arg = arg.toString().trim();
-
-    if(/^\d+$/.test(arg)) return { ok: true, id: parseInt(arg) };
-
-    const linkMatch = arg.match(/(?:t\.me|telegram\.me)\/([\w\d_]+)/i);
-    if(linkMatch) arg = '@' + linkMatch[1];
-
-    if(arg.startsWith('@')){
-      try{ const chat = await bot.telegram.getChat(arg); return { ok: true, id: chat.id }; }
-      catch(e){ return { ok: false, error: "Impossible de récupérer l'utilisateur depuis le username." }; }
-    }
-
-    return { ok:false, error:"Format d'identifiant non reconnu."};
-  }catch(err){ return { ok:false, error:"Erreur résolution target: "+err.message }; }
+// Vérifie si l'utilisateur peut créer un panel
+export async function canCreatePanel(telegramId) {
+  const user = await Users.findOne({ telegram_id: telegramId });
+  if (!user) return false;
+  return user.panels_used < user.panels_limit;
 }
