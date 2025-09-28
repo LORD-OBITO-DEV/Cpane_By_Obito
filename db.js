@@ -1,10 +1,10 @@
 import mongoose from "mongoose";
-import 'dotenv/config';
+import config from "./system/config.js";  // ← notre config.js
 
-const uri = process.env.MONGO_URI;
+const uri = config.MONGO_URI;
 
 if (!uri) {
-  throw new Error("⚠️  MONGO_URI n'est pas défini dans les variables d'environnement !");
+  throw new Error("⚠️ MONGO_URI n'est pas défini dans config.js !");
 }
 
 export const connectDB = async () => {
