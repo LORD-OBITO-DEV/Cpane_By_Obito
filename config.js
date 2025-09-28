@@ -1,6 +1,19 @@
 export default {
   BOT_TOKEN: "8133998553:AAGJGie0NxO5Aie_R7cs_cz4UHSFgtkN_Pw",
   ADMIN_ID: 6587556123,
+
+USE_WHATSAPP: true,
+    CONTACT_ADMIN: {
+        telegram: "https://t.me/LORD_OBITO_DEV",
+        whatsapp: "+2256587556123"
+    },
+
+    NEWSLETTER: [
+        "120363401981326696@newsletter",
+        "120363419984097704@newsletter"
+    ],
+
+ADMIN_NUMBER: "2250712668494", // Numéro WhatsApp de l'admin
   
   PTERO_URL: "https://panel.tondomaine.com",
   PTERO_API_KEY: "ptla_P5ajM5606J9cvfqbueud8582blHWqkDevte2NwRNLOq",
