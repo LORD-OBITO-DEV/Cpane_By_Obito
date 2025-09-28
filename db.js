@@ -1,23 +1,23 @@
 import mongoose from "mongoose";
-import dotenv from "dotenv";
+import 'dotenv/config';
 
-dotenv.config();
+const uri = process.env.MONGO_URI;
 
-const MONGO_URI = process.env.MONGO_URI;
-
-if (!MONGO_URI) {
+if (!uri) {
   throw new Error("⚠️  MONGO_URI n'est pas défini dans les variables d'environnement !");
 }
 
-mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+export const connectDB = async () => {
+  try {
+    await mongoose.connect(uri, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true
+    });
+    console.log("✅ MongoDB connectée !");
+  } catch (err) {
+    console.error("❌ Erreur de connexion MongoDB :", err);
+    process.exit(1);
+  }
+};
 
-export const Users = mongoose.model("Users", new mongoose.Schema({
-  telegram_id: { type: String, required: true, unique: true },
-  premium: { type: Boolean, default: false },
-  expire_at: { type: Date, default: null },
-  panels_used: { type: Number, default: 0 },
-  panels_limit: { type: Number, default: 1 },
-}));
+connectDB();
