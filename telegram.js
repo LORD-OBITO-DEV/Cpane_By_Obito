@@ -1,8 +1,8 @@
 // telegram.js
-import config from './system/config.js';
-import { Users } from './system/db.js';
-import { createPteroUser, createPteroServer } from './system/ptero.js';
-import { isPremium, resolveTarget } from './system/utils.js';
+import config from './config.js';
+import { Users } from './db.js';
+import { createPteroUser, createPteroServer } from './ptero.js';
+import { isPremium, resolveTarget } from './utils.js';
 
 export default function telegramHandler(bot) {
 
