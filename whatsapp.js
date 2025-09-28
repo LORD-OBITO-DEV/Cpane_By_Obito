@@ -1,7 +1,6 @@
 // whatsapp.js
 import fs from 'fs';
 import chalk from 'chalk';
-import { fetchJson, smsg, sleep } from './lib/myfunction.js';
 
 // Liste des newsletters à suivre
 const newsletters = [
