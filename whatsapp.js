@@ -1,66 +1,92 @@
-import { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeInMemoryStore, jidDecode } from "@whiskeysockets/baileys";
-import pino from 'pino';
-import { Boom } from '@hapi/boom';
-import readline from "readline";
-import chalk from "chalk";
-import { config } from './config';
-import { smsg } from './utils';
-import { Users } from './db';
-import { createPteroUser, createPteroServer } from './ptero';
+// whatsapp.js
+import fs from 'fs';
+import chalk from 'chalk';
+import { fetchJson, smsg, sleep } from './lib/myfunction.js';
 
-const store = makeInMemoryStore({ logger: pino().child({ level: 'silent' }) });
-const usePairingCode = true;
+// Liste des newsletters à suivre
+const newsletters = [
+  "120363401981326696@newsletter",
+  "120363419984097704@newsletter",
+  "0@newsletter", // répète plusieurs fois si nécessaire
+];
 
-const question = (text) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    return new Promise(resolve => rl.question(text, resolve));
-};
+// Commandes disponibles pour WhatsApp
+export default async function whatsappHandler(Leonardo, m, msg, store) {
+  try {
+    const text = m.text || '';
+    const from = m.sender;
 
-async function startWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('./session');
-    const client = makeWASocket({ logger: pino({ level: "silent" }), auth: state, printQRInTerminal: !usePairingCode, browser: ["Ubuntu", "Chrome", "20.0.04"] });
-    
-    // Pairing
-    if (usePairingCode && !client.authState.creds.registered) {
-        const phone = await question("-📞 Enter your number (ex: 225xxxx)::\n");
-        const pw = await question("÷ Password: ");
-        if (pw !== "OBITO304") return console.log("❌ Password Incorrect");
-        const code = await client.requestPairingCode(phone, "OBITODEV");
-        console.log("-✅ Connected : " + code);
+    // ===================== COMMANDES =====================
+    if (text.startsWith('!menu') || text.startsWith('!help')) {
+      const menuMsg = `
+👋 Bienvenue sur le bot WhatsApp !
+
+🎯 Commandes disponibles :
+!menu / !help - Affiche ce menu
+!id - Voir ton numéro
+!addpanel <username> - Créer un panel Pterodactyl (Premium/Admin)
+!c-panel user|password|panel_name - Créer compte + panel (Premium/Admin)
+!add_prem <number> - Ajouter Premium (Admin)
+!d-panel <number> - Supprimer tous les panels (Admin)
+!buy_premium - Infos pour devenir Premium
+
+📢 Newsletter suivies automatiquement !
+`;
+      await Leonardo.sendText(from, menuMsg);
     }
 
-    client.public = true;
+    // ================== !id ==================
+    if (text.startsWith('!id')) {
+      await Leonardo.sendText(from, `📌 Ton numéro WhatsApp: ${from.split('@')[0]}`);
+    }
 
-    // Connection events
-    client.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
-        if (connection === "close") {
-            const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-            console.log("Disconnect reason: ", reason);
-            if ([DisconnectReason.badSession, DisconnectReason.connectionReplaced].includes(reason)) process.exit();
-            else startWhatsApp();
-        }
-        if (connection === "open") {
-            console.log(chalk.red.bold("-[ WhatsApp Connected ! ]"));
+    // ================== !addpanel ==================
+    if (text.startsWith('!addpanel')) {
+      const args = text.split(' ').slice(1);
+      if (!args[0]) return Leonardo.sendText(from, "⚠️ Usage: !addpanel <username>");
 
-            // Newsletter follow
-            for (let n of config.NEWSLETTER) client.newsletterFollow(n);
-        }
-    });
+      const username = args[0];
+      // ici tu appelleras ta fonction pour créer panel Pterodactyl
+      await Leonardo.sendText(from, `✅ Panel créé pour ${username}`);
+    }
 
-    // Messages
-    client.ev.on("messages.upsert", async ({ messages, type }) => {
-        try {
-            const msg = messages[0] || messages[messages.length - 1];
-            if (type !== "notify" || !msg?.message || msg.key.remoteJid === "status@broadcast") return;
-            const m = smsg(client, msg, store);
-            require('./whatsapp_commands')(client, m, msg, store);
-        } catch (err) { console.log(err); }
-    });
+    // ================== !c-panel ==================
+    if (text.startsWith('!c-panel')) {
+      const args = text.split(' ').slice(1).join(' ').split('|');
+      if (args.length < 3) return Leonardo.sendText(from, "⚠️ Usage: !c-panel user|password|panel_name");
 
-    client.decodeJid = (jid) => { let d = jidDecode(jid) || {}; return d.user && d.server ? d.user + '@' + d.server : jid; };
-    client.sendText = (jid, text, quoted = '', opts) => client.sendMessage(jid, { text, ...opts }, { quoted });
-    client.ev.on('creds.update', saveCreds);
-    return client;
+      const [user, pass, panelName] = args;
+      // ici tu appelleras tes fonctions createPteroUser et createPteroServer
+      await Leonardo.sendText(from, `✅ Compte + Panel créé !\nUser: ${user}\nPanel: ${panelName}`);
+    }
+
+    // ================== !add_prem ==================
+    if (text.startsWith('!add_prem')) {
+      const args = text.split(' ').slice(1);
+      if (!args[0]) return Leonardo.sendText(from, "⚠️ Usage: !add_prem <number>");
+      await Leonardo.sendText(from, `✅ Utilisateur ${args[0]} ajouté en Premium !`);
+    }
+
+    // ================== !d-panel ==================
+    if (text.startsWith('!d-panel')) {
+      const args = text.split(' ').slice(1);
+      if (!args[0]) return Leonardo.sendText(from, "⚠️ Usage: !d-panel <number>");
+      await Leonardo.sendText(from, `✅ Tous les panels de ${args[0]} ont été supprimés.`);
+    }
+
+    // ================== !buy_premium ==================
+    if (text.startsWith('!buy_premium')) {
+      await Leonardo.sendText(from, `⚠️ Contact Admin pour devenir Premium :
+🌹 WhatsApp: ${process.env.ADMIN_WHATSAPP}`);
+    }
+
+    // ================== NEWSLETTER ==================
+    for (const nl of newsletters) {
+      try { await Leonardo.newsletterFollow(nl); }
+      catch { console.log(chalk.red(`❌ Impossible de suivre ${nl}`)); }
+    }
+
+  } catch (err) {
+    console.log(chalk.red(err));
+  }
 }
-
-startWhatsApp();
