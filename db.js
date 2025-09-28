@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import config from "./system/config.js";  // ← notre config.js
+import config from "./config.js";  // ← notre config.js
 
 const uri = config.MONGO_URI;
 
